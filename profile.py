@@ -6,7 +6,9 @@ from math import copysign
 
 
 class Profile():
-
+    """
+    Class that represents single jet tranverse profile.
+    """
     def __init__(self, coords, rigde_point):
         self._coords = coords
         self._cp = rigde_point
@@ -32,37 +34,65 @@ class Profile():
             
     @property
     def stokes(self):
+        """
+        Shorthand for all stokes.
+        """
         return list(self._data_dict.keys())
 
     @property
     def coords(self):
+        """
+        Shorthand for profile points coordinates.
+        """
         return self._coords
 
     @property
     def dec(self):
+        """
+        Shorthand for profile points declinations.
+        """
         return np.array([coord[1] for coord in self._coords])
 
     @property
     def ra(self):
+        """
+        Shorthand for profile points right ascentions.
+        """
         return np.array([coord[0] for coord in self._coords])
 
     @property
     def width(self):
+        """
+        Shorthand for profile width.
+        """
         if self._fit is None:
             self._fit_gauss(self)
         return (np.max(self._fitspace[self._fit>np.max(self._fit)/2])-\
                 np.min(self._fitspace[self._fit>np.max(self._fit)/2]))/2
 
-
     def get_dec_w_threshold(self, stk=None):
+        """
+        Shorthand for profile points declinations. Points with flux below the 
+        theshold are ignored.
+        """
         stk = self._stk_checker(stk)
         return self.dec[self._data_dict[stk] > self._threshold[stk]]
 
     def get_ra_w_threshold(self, stk=None):
+        """
+        Shorthand for profile points right ascentions. Points with flux below the 
+        theshold are ignored.
+        """
         stk = self._stk_checker(stk)
         return self.ra[self._data_dict[stk] > self._threshold[stk]]
 
     def load_data(self, profile, stk="I"):
+        """
+        Load profile data.
+
+        :param stk:
+            Data points will be interpreted as observations in stokes stk. Default is 'I'.
+        """
         if len(profile) != len(self._coords):
             raise Exception("Loaded arr have incompatible dimentions!") 
         stk = stk.upper()
@@ -70,10 +100,16 @@ class Profile():
         self._data_dict[stk] = np.array(profile)
 
     def set_threshold(self, trd, stk=None):
+        """
+        Sets minumum flux level for a profile in stokes stk.
+        """
         stk = self._stk_checker(stk)
         self._threshold[stk] = trd
 
     def get(self, stk=None):
+        """
+        Shorthand for getting profile data for stokes stk.
+        """
         stk = self._stk_checker(stk)
         return self._data_dict[stk][self._data_dict[stk] > self._threshold[stk]]
 
@@ -131,6 +167,24 @@ class Profile():
 
     def plot(self, stk=None, outdir='', outfile='profile.png', fig=None, ax=None, 
              plot_fit=False, plot_profile=True, color=None, save=True):
+        """
+        Plot profile.
+
+        :param stk:
+            Stokes of profile to plot.
+        :param outdir:
+            Output directory.
+        :param outfile:
+            Name of file with the plot.
+        :param plot_fit (optional):
+            Plot profile fit? Default is False.
+        :param plot_profile (optional):
+            Plot profile itself? Default is True.
+        :param color (optional):
+            Plot color.
+        :param save (optional):
+           Wright the plot in a file? Default is True.
+        """
         stk = self._stk_checker(stk)
 
         if fig is None:

@@ -1938,12 +1938,21 @@ def get_transverse_profile(ccfits, PA, nslices=200, plot_zobs_min=0, plot_zobs_m
 
 
 class Jet_data(CleanImage):
-
+    """
+    Class that represents multiple stokes image made using CLEAN algorithm.
+    """
     def __init__(self):
         super().__init__()
         self._image_dict = {}
 
     def from_hdulist(self, hdulist, set_stokes=None):
+        """
+        Load image from provided hdulist (instance of astropy.io.fits.HDUList)
+
+        :param set_stokes:
+            Forcibly lables loadad data as observations is set stokes. If None
+            stokes read directly from hdulist.
+        """
         image_params = get_fits_image_info_from_hdulist(hdulist)
         if self._name is not None and self._name != image_params["name"]:
             raise Exception("Observations of different sources are loaded!")
@@ -1954,11 +1963,21 @@ class Jet_data(CleanImage):
         self._image_dict[set_stokes] = pr_hdu.data.squeeze()
 
     def from_fits(self, fname, set_stokes=None):
+        """
+        Load image from provided fits file.
+
+        :param set_stokes:
+            Forcibly lables loadad data as observations is set stokes. If None
+            stokes read directly from fits file.
+        """
         hdulist = pf.open(fname)
         self.from_hdulist(hdulist, set_stokes=set_stokes)
 
     @property
     def image_dict(self):
+        """
+        Shorthand for all images.
+        """
         return self._image_dict
     
     @property
@@ -1968,6 +1987,9 @@ class Jet_data(CleanImage):
     
     @property
     def stokes(self):
+        """
+        Shorthand for all stokes.
+        """
         return list(self._image_dict.keys())
     
     @stokes.setter
@@ -1976,6 +1998,12 @@ class Jet_data(CleanImage):
         pass
 
     def get_image(self, stk=None):
+        """
+        Shorthand for getting particular image. Must be used instead of .image.
+
+        :param stk:
+            Observations stokes. If None will try to returs I or a sigle present stokes.
+        """
         if len(self._image_dict) == 0:
             raise Exception(f"No image data found! Use .from_fits method")
         if stk is None:

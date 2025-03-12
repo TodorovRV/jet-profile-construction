@@ -10,7 +10,9 @@ from profile import Profile
 
 
 class Ridgeline_constructor(Jet_data):
-
+    """
+    Class that represents multiple stokes image with ridgeline on it.
+    """
     def __init__(self):
         super().__init__()
         self._ridgeline = []
@@ -18,21 +20,44 @@ class Ridgeline_constructor(Jet_data):
 
     @property
     def ridgeline(self):
+        """
+        Shorthand for getting ridgeline data.
+
+        :return:
+        Array [[x1, y1], [x2, y2], ...] where each couple x_, y_ represents coordinates of sigle
+        ridgline point (in mas).
+        """
         if len(self._ridgeline) == 0:
             raise Exception(f"No ridgeline data found! Use .construct_ridge or .ridgeline_from_fits method")
         return self._ridgeline
     
     @ridgeline.setter
     def ridgeline(self, new_ridge):
+        """
+        Shorthand for setting ridgeline data.
+        """
         self._ridgeline = new_ridge
 
     def ridgeline_from_fits(self, fname):
+        """
+        Load ridgeline from provided fits file.
+        """
         ridge = np.loadtxt(fname, comments='#')
         for point in ridge:
             self._ridgeline.append([point[0], point[1]])
         self._ridgeline = np.array(self._ridgeline)
 
     def construct_ridge(self, threshold=None, stk='I', smoothing_factor=0.2):
+        """
+        Constructs ridgeline. 
+
+        :param threshold:
+            Threshold flux level. Pixels with lower flux are ignored. Default is 20*std.
+        :param stk:
+            Stokes of image used for ridgeline construction. Default is 'I'.
+        :param smoothing_factor (optional):
+            Spline smoothing factor. 
+        """
         stk = stk.upper()
         img = self.get_image(stk)
 
@@ -119,6 +144,16 @@ class Ridgeline_constructor(Jet_data):
         self._ridgeline = np.array(self._ridgeline)
 
     def plot(self, stk=None, outdir='', outfile='fig.png', fig=None, ax=None):
+        """
+        Plot image.
+
+        :param stk:
+            Stokes of image to plot.
+        :param outdir:
+            Output directory.
+        :param outfile:
+            Name of file with the plot.
+        """
         if stk is None:
             if len(self._image_dict) == 1:
                 stk = list(self._image_dict.keys())[0]
@@ -170,11 +205,17 @@ class Ridgeline_constructor(Jet_data):
 
 
 class Profile_constructor(Ridgeline_constructor):
-
+    """
+    Class that represents multiple stokes image with ridgeline on it and provides some methods
+    for profile construction.
+    """
     def __init__(self):
         super().__init__()
 
     def profile_from_idx(self, idx):
+        """
+        Provides profile from ridgeline point index.
+        """
         if len(self._ridgeline) == 0:
             if len(self.stokes) == 1:
                 warnings.warn("No rigeline found, constructing")
@@ -205,6 +246,9 @@ class Profile_constructor(Ridgeline_constructor):
         return P
 
     def profile_from_distance(self, target_dist):
+        """
+        Provides profile on set distance along ridgeline.
+        """
         dist = 0.
         idx = 0 
         while target_dist > dist:
@@ -233,6 +277,18 @@ class Profile_constructor(Ridgeline_constructor):
         return ras, decs
 
     def plot(self, stk=None, outdir='', outfile='fig.png', fig=None, ax=None, profile_to_plot=None):
+        """
+        Plot image.
+
+        :param stk:
+            Stokes of image to plot.
+        :param outdir:
+            Output directory.
+        :param outfile:
+            Name of file with the plot.
+        :param profile_to_plot:
+            List of profiles to plot. Each profile must be an instance of Profile.
+        """
         if fig is None:
             fig = plt.figure(figsize=(8.5, 6))
         if ax is None:
