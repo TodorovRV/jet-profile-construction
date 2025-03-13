@@ -38,6 +38,17 @@ class Ridgeline_constructor(Jet_data):
         """
         self._ridgeline = new_ridge
 
+    @property
+    def length(self):
+        """
+        Shorthand for getting ridgeline length (in mas).
+        """
+        dist = 0.
+        for idx in range(len(self._ridgeline)-1):
+            dist += np.hypot(self._ridgeline[idx+1][0]-self._ridgeline[idx][0],
+                             self._ridgeline[idx+1][1]-self._ridgeline[idx][1])
+        return dist
+
     def ridgeline_from_fits(self, fname):
         """
         Load ridgeline from provided fits file.
@@ -330,13 +341,14 @@ if __name__ == "__main__":
     # get profiles from distance along ridgeline
     p = r.profile_from_distance(7)
     b = r.profile_from_distance(5)
-    # profiles also can be constructed from redgeline poin index: r.profile_from_idx(200)
+    # profiles also can be constructed from redgeline point index: r.profile_from_idx(200)
 
     # setting lower flux level
     p.set_threshold(10*std)
     b.set_threshold(10*std)
 
     # individual profiles can be plot
+    b._fit_single_gauss()
     b.plot(outfile='example/profile.png', plot_fit=True)
 
     # one can get profiles width
