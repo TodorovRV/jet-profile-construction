@@ -320,6 +320,7 @@ class Profile_constructor(Ridgeline_constructor):
 
         if outfile is not None:
             fig.savefig(os.path.join(outdir, outfile), bbox_inches='tight')
+            plt.close()
 
         
 if __name__ == "__main__":
@@ -348,7 +349,6 @@ if __name__ == "__main__":
     b.set_threshold(10*std)
 
     # individual profiles can be plot
-    b._fit_single_gauss()
     b.plot(outfile='example/profile.png', plot_fit=True)
 
     # one can get profiles width

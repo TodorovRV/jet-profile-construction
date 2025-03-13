@@ -17,6 +17,7 @@ class Profile():
         self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
         self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 1000)
         self._fit = None
+        self._fitparam = {}
 
     def _stk_checker(self, stk):
         if len(self._data_dict) == 0:
@@ -66,7 +67,7 @@ class Profile():
         Shorthand for profile width.
         """
         if self._fit is None:
-            self._fit_gauss(self)
+            self._fit_gauss()
         return (np.max(self._fitspace[self._fit>np.max(self._fit)/2])-\
                 np.min(self._fitspace[self._fit>np.max(self._fit)/2]))/2
 
@@ -127,6 +128,8 @@ class Profile():
         print(f'Max coordinate = {round(popt[1], 2)} mas')
         print()
         self._fit = gausssian_fit
+        self._fitparam["N"] = 1
+        self._fitparam["popt"] = popt
 
     def _fit_gauss(self, stk=None):
         stk = self._stk_checker(stk)
@@ -146,9 +149,11 @@ class Profile():
         popt2mem = None
         while N < 5:
             params_0 = np.array([1 for _ in range(N)]+[0 for i in range(N)]+[1 for _ in range(N)])
-            popt, pcov = curve_fit(lambda x, *params_0: wrapper_gausssian_N(x, N, params_0), \
-                    self._rel_dist, self._data_dict[stk], p0=params_0, method='trf')
-
+            try: 
+                popt, pcov = curve_fit(lambda x, *params_0: wrapper_gausssian_N(x, N, params_0), \
+                        self._rel_dist, self._data_dict[stk], p0=params_0, method='trf')
+            except RuntimeError:
+                break
             cond_ = np.linalg.cond(pcov)
             expected = wrapper_gausssian_N(self._rel_dist, N-1, popt)
             r = self._data_dict[stk] - expected
@@ -162,8 +167,13 @@ class Profile():
                 break
             N += 1
 
+        if popt2mem is None:
+            print("Fit unsuccessful!")
+            return 0
         gausssian_fit = wrapper_gausssian_N(self._fitspace, N-1, popt2mem)
         self._fit = gausssian_fit
+        self._fitparam["N"] = N-1
+        self._fitparam["popt"] = popt2mem
 
     def plot(self, stk=None, outdir='', outfile='profile.png', fig=None, ax=None, 
              plot_fit=False, plot_profile=True, color=None, save=True):
@@ -193,16 +203,16 @@ class Profile():
             ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
         ax.set_xlabel(r'Relative dist. (mas)')
         ax.set_ylabel(r'Flux, mJy/beam')
-        print(self.coords[np.argmax(self._data_dict[stk])])
+
         if len(self.stokes) > 1:
             if color is None:
                 color = list(np.random.choice(range(256), size=3)/256)
-            ax.legend(loc='best')
+            ax.title(f'Stokes {stk}')
 
         if plot_profile:
             ax.scatter(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
                        self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], 
-                       color=color)
+                       color=color, label='data')
 
         if plot_fit:
             if self._fit is None:
@@ -210,8 +220,9 @@ class Profile():
             gausssian_fit = self._fit
             ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
                     gausssian_fit[gausssian_fit>self._threshold[stk]], 
-                    color=color, label=f'Stokes {stk}')
-
+                    color=color, label=f'fit, N = {self._fitparam["N"]}')
+                    
+        ax.legend(loc="best")
         if outfile is not None:
             plt.savefig(os.path.join(outdir, outfile), bbox_inches='tight')
             plt.close()
