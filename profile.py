@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 from math import copysign
 
 
+def gausssian(x, a, x0, sigma): 
+    return a*np.exp(-(x-x0)**2/(2*sigma**2)) 
+
+
 class Profile():
     """
     Class that represents single jet tranverse profile.
@@ -15,7 +19,7 @@ class Profile():
         self._data_dict = {}
         self._threshold = {}
         self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
-        self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 1000)
+        self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 10000)
         self._fit = None
         self._fitparam = {}
 
@@ -117,9 +121,9 @@ class Profile():
     def _fit_single_gauss(self, stk=None):
         stk = self._stk_checker(stk)
 
-        def gausssian(x, a, x0, sigma): 
-            return a*np.exp(-(x-x0)**2/(2*sigma**2)) 
-        popt, pcov = curve_fit(gausssian, self._rel_dist, self._data_dict[stk])     
+        popt, pcov = curve_fit(gausssian, 
+                               self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
+                               self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])     
         gausssian_fit = gausssian(self._fitspace, popt[0], popt[1], popt[2])
         print()
         print(f'Gaussian fit paremeters for stokes {stk}:')
@@ -135,9 +139,9 @@ class Profile():
         stk = self._stk_checker(stk)
 
         def gausssian_N(x, a, x0, sigma, N): 
-            res = 0
+            res = 0.
             for a_, x0_, sigma_ in zip(a, x0, sigma):
-                res += a_*np.exp(-(x-x0_)**2/(2*sigma_**2))
+                res += abs(a_)*np.exp(-(x-x0_)**2/(2*sigma_**2))
             return res
 
         def wrapper_gausssian_N(x, N, *args):
@@ -148,21 +152,31 @@ class Profile():
         cond = np.inf
         popt2mem = None
         while N < 5:
-            params_0 = np.array([1 for _ in range(N)]+[0 for i in range(N)]+[1 for _ in range(N)])
+            ma = np.max(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])
+            diff = np.max(self._rel_dist[self._data_dict[stk]>self._threshold[stk]]) - \
+                   np.min(self._rel_dist[self._data_dict[stk]>self._threshold[stk]])
+            basex0 = diff/(N+1)
+            params_0 = np.array([ma/2 for _ in range(N)]+ \
+                                [-diff/2+basex0*(i+1) for i in range(N)]+ \
+                                [basex0/2 for _ in range(N)])
             try: 
                 popt, pcov = curve_fit(lambda x, *params_0: wrapper_gausssian_N(x, N, params_0), \
-                        self._rel_dist, self._data_dict[stk], p0=params_0, method='trf')
+                                       self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
+                                       self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], 
+                                       p0=params_0, method='trf')
             except RuntimeError:
                 break
-            cond_ = np.linalg.cond(pcov)
-            expected = wrapper_gausssian_N(self._rel_dist, N-1, popt)
-            r = self._data_dict[stk] - expected
-            chisq = np.sum((r/np.std(self._data_dict[stk]))**2)
+            expected = wrapper_gausssian_N(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], N, popt)
+            # r = abs(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]] - expected)
+            # chisq = np.sum((r/np.std(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]]))**2)/N
+            obs = self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]][expected>0.]
+            expected = expected[expected>0.]
+            chisq = np.sum((obs-expected)**2/expected)/N
             if chisq is None:
                 break
-            if chisq/N < cond:
+            if chisq < cond and np.max(wrapper_gausssian_N(self._fitspace, N, popt)) < ma*1.1:
                 popt2mem = popt
-                cond = chisq/N
+                cond = chisq
             else:
                 break
             N += 1
@@ -221,6 +235,14 @@ class Profile():
             ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
                     gausssian_fit[gausssian_fit>self._threshold[stk]], 
                     color=color, label=f'fit, N = {self._fitparam["N"]}')
+            if self._fitparam["N"] > 1:
+                N = self._fitparam["N"]
+                args = self._fitparam["popt"]
+                a, b, c = list(args[:N]), list(args[N:2*N]), list(args[2*N:3*N])
+                for a_, x0, sigma in zip(a, b, c):
+                    ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
+                            gausssian(self._fitspace[gausssian_fit>self._threshold[stk]], abs(a_), x0, sigma), 
+                            label=None)
                     
         ax.legend(loc="best")
         if outfile is not None:
