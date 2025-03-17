@@ -3,6 +3,7 @@ import os
 from scipy.optimize import curve_fit 
 import matplotlib.pyplot as plt
 from math import copysign
+import warnings
 
 
 def gausssian(x, a, x0, sigma): 
@@ -137,6 +138,12 @@ class Profile():
 
     def _fit_gauss(self, stk=None):
         stk = self._stk_checker(stk)
+        if self._threshold[stk] == 0.:
+            warnings.warn("Threshold isnt set! Fit may be inaccurate.")
+            std = np.std(self._data_dict[stk])
+        else:
+            # std = np.std(self._data_dict[stk][self._data_dict[stk]<self._threshold[stk]])
+            std = 2*self._threshold[stk]
 
         def gausssian_N(x, a, x0, sigma, N): 
             res = 0.
@@ -167,20 +174,36 @@ class Profile():
             except RuntimeError:
                 break
             expected = wrapper_gausssian_N(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], N, popt)
-            # r = abs(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]] - expected)
-            # chisq = np.sum((r/np.std(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]]))**2)/N
-            obs = self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]][expected>0.]
-            expected = expected[expected>0.]
-            chisq = np.sum((obs-expected)**2/expected)/N
-            if chisq is None:
+
+            # # r = abs(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]] - expected)
+            # # chisq = np.sum((r/np.std(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]]))**2)/N
+            # obs = self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]][expected>0.]
+            # expected = expected[expected>0.]
+            # chisq = np.sum((obs-expected)**2/expected)/N
+            # if chisq is None:
+            #     break
+            # if chisq < cond and np.max(wrapper_gausssian_N(self._fitspace, N, popt)) < ma*1.1:
+            #     popt2mem = popt
+            #     cond = chisq
+            # else:
+            #     break
+            
+            loglikelihood = 0.
+            for obs, exp in zip(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], expected):
+                loglikelihood += -((obs-exp)**2)/2/(std**2)
+            Npoints = np.sum(self._data_dict[stk]>self._threshold[stk])
+            bic = 2*3*N*(1+np.log(Npoints))-2*(loglikelihood-Npoints*np.log(1/np.sqrt(2*np.pi)/std))
+            # print(f"N = {N}, bic = {bic}, logl = {2*loglikelihood}")
+            if bic is None:
                 break
-            if chisq < cond and np.max(wrapper_gausssian_N(self._fitspace, N, popt)) < ma*1.1:
+            if bic < cond and np.max(wrapper_gausssian_N(self._fitspace, N, popt)) < ma*1.1:
                 popt2mem = popt
-                cond = chisq
+                cond = bic
             else:
                 break
             N += 1
 
+        self._fitparam["N"] = 1
         if popt2mem is None:
             print("Fit unsuccessful!")
             return 0
