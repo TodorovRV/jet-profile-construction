@@ -23,6 +23,7 @@ class Profile():
         self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 10000)
         self._fit = None
         self._fitparam = {}
+        self._N_max = 4
 
     def _stk_checker(self, stk):
         if len(self._data_dict) == 0:
@@ -75,6 +76,20 @@ class Profile():
             self._fit_gauss()
         return (np.max(self._fitspace[self._fit>np.max(self._fit)/2])-\
                 np.min(self._fitspace[self._fit>np.max(self._fit)/2]))/2
+
+    @property
+    def N_max(self):
+        """
+        Shorthand maximum gusssians used in fit.
+        """
+        return self.N_max
+
+    @N_max.setter
+    def N_max(self, new):
+        """
+        Shorthand for setting maximum gusssians used in fit.
+        """
+        self._N_max = new
 
     def get_dec_w_threshold(self, stk=None):
         """
@@ -158,7 +173,7 @@ class Profile():
         N = 1
         cond = np.inf
         popt2mem = None
-        while N < 5:
+        while N <= self._N_max:
             ma = np.max(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])
             diff = np.max(self._rel_dist[self._data_dict[stk]>self._threshold[stk]]) - \
                    np.min(self._rel_dist[self._data_dict[stk]>self._threshold[stk]])
@@ -170,7 +185,7 @@ class Profile():
                 popt, pcov = curve_fit(lambda x, *params_0: wrapper_gausssian_N(x, N, params_0), \
                                        self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
                                        self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], 
-                                       p0=params_0, method='trf')
+                                       p0=params_0, method='dogbox')
             except RuntimeError:
                 break
             expected = wrapper_gausssian_N(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], N, popt)
@@ -255,18 +270,19 @@ class Profile():
             if self._fit is None:
                 self._fit_gauss(stk=stk)
             gausssian_fit = self._fit
-            ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
-                    gausssian_fit[gausssian_fit>self._threshold[stk]], 
-                    color=color, label=f'fit, N = {self._fitparam["N"]}')
-            if self._fitparam["N"] > 1:
-                N = self._fitparam["N"]
-                args = self._fitparam["popt"]
-                a, b, c = list(args[:N]), list(args[N:2*N]), list(args[2*N:3*N])
-                for a_, x0, sigma in zip(a, b, c):
-                    ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
-                            gausssian(self._fitspace[gausssian_fit>self._threshold[stk]], abs(a_), x0, sigma), 
-                            label=None)
-                    
+            if gausssian_fit is not None:
+                ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
+                        gausssian_fit[gausssian_fit>self._threshold[stk]], 
+                        color=color, label=f'fit, N = {self._fitparam["N"]}')
+                if self._fitparam["N"] > 1:
+                    N = self._fitparam["N"]
+                    args = self._fitparam["popt"]
+                    a, b, c = list(args[:N]), list(args[N:2*N]), list(args[2*N:3*N])
+                    for a_, x0, sigma in zip(a, b, c):
+                        ax.plot(self._fitspace[gausssian_fit>self._threshold[stk]], 
+                                gausssian(self._fitspace[gausssian_fit>self._threshold[stk]], abs(a_), x0, sigma), 
+                                label=None)
+                        
         ax.legend(loc="best")
         if outfile is not None:
             plt.savefig(os.path.join(outdir, outfile), bbox_inches='tight')
