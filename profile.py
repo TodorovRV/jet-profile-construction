@@ -25,6 +25,14 @@ class Profile():
         self._fitparam = {}
         self._N_max = 4
 
+    def rel_coord_2_abs_coord(self, c):
+        """
+        Convert relative profile coordinates into image coordinates.
+        """
+        ra = c*(self._coords[-1][0]-self._cp[0])/self._rel_dist[-1]+self._cp[0]
+        dec = c*(self._coords[-1][1]-self._cp[1])/self._rel_dist[-1]+self._cp[1]
+        return ra, dec
+
     def _stk_checker(self, stk):
         if len(self._data_dict) == 0:
             raise Exception(f"No data found!")
@@ -80,9 +88,29 @@ class Profile():
     @property
     def N_max(self):
         """
-        Shorthand maximum gusssians used in fit.
+        Shorthand maximum gaussians used in fit.
         """
         return self.N_max
+
+    @property
+    def fitparam(self):
+        """
+        Shorthand for fit parameters.
+
+        :return:
+            numpy array with size 3N, where N - number of fitted gaussians
+            first N params are gaussian amplitudes [image units], 
+            second - maximums in relative coordinates [mas],
+            third are dispersions [mas]
+        """
+        return self._fitparam["popt"]
+
+    @property
+    def N(self):
+        """
+        Shorthand number gaussians used in fit.
+        """
+        return self._fitparam["N"]
 
     @N_max.setter
     def N_max(self, new):
@@ -220,6 +248,9 @@ class Profile():
 
         self._fitparam["N"] = 1
         if popt2mem is None:
+            print("Fit unsuccessful!")
+            return 0
+        if np.max(abs(popt2mem[N:2*N])) > np.max(abs(self._fitspace)):
             print("Fit unsuccessful!")
             return 0
         gausssian_fit = wrapper_gausssian_N(self._fitspace, N-1, popt2mem)
