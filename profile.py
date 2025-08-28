@@ -4,6 +4,7 @@ from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from math import copysign
 import warnings
+from scipy.ndimage import measurements
 
 
 def gausssian(x, a, x0, sigma): 
@@ -19,11 +20,32 @@ class Profile():
         self._cp = rigde_point
         self._data_dict = {}
         self._threshold = {}
+        # self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
         self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
+        self._rel_dist_correction()
         self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 10000)
         self._fit = None
         self._fitparam = {}
         self._N_max = 4
+
+    def _rel_dist_correction(self):
+        mem = abs(self._rel_dist[0])
+        it = 1
+        while abs(self._rel_dist[it]) < mem:
+            if self._rel_dist[it]*self._rel_dist[0] < 0:
+                self._rel_dist[it] *= -1.
+            mem =  abs(self._rel_dist[it])
+            it += 1
+        mem = abs(self._rel_dist[-1])
+        it = len(self._rel_dist)-2
+        while abs(self._rel_dist[it]) < mem:
+            if self._rel_dist[it]*self._rel_dist[it+1] < 0:
+                self._rel_dist[it] *= -1.
+            mem = abs(self._rel_dist[it])
+            it -= 1
+        it += 1
+        if abs(self._rel_dist[it-1]) > abs(self._rel_dist[it+1]):
+            self._rel_dist[it] *= -1.
 
     def rel_coord_2_abs_coord(self, c):
         """
@@ -103,14 +125,22 @@ class Profile():
             second - maximums in relative coordinates [mas],
             third are dispersions [mas]
         """
-        return self._fitparam["popt"]
+        try:
+            return self._fitparam["popt"]
+        except KeyError:
+            self._fit_gauss(stk=None)
+            return self._fitparam["popt"]
 
     @property
     def N(self):
         """
         Shorthand number gaussians used in fit.
         """
-        return self._fitparam["N"]
+        try:
+            return self._fitparam["N"]
+        except KeyError:
+            self._fit_gauss(stk=None)
+            return self._fitparam["N"]
 
     @N_max.setter
     def N_max(self, new):
@@ -162,11 +192,29 @@ class Profile():
         stk = self._stk_checker(stk)
         return self._data_dict[stk][self._data_dict[stk] > self._threshold[stk]]
 
+    def get_rel_dist_1cluster(self, stk=None):
+        p = self._data_dict[stk]>self._threshold[stk]
+        stk = self._stk_checker(stk)
+        # lw, num = measurements.label(self._data_dict[stk]>self._threshold[stk])
+        lw, num = measurements.label(p)
+        area = measurements.sum(p, lw, index=np.arange(lw.max() + 1))
+        idx_max = np.argmax(area)
+        where = np.where(lw == idx_max)[0]
+        if self._rel_dist[where[-1]]*self._rel_dist[where[0]] < 0:
+            return self._rel_dist[where[0]:where[-1]].copy()
+        else:
+            return None
+
+    def get_rel_dist(self, stk=None):
+
+        stk = self._stk_checker(stk)
+        return self._rel_dist[self._data_dict[stk] > self._threshold[stk]]
+
     def _fit_single_gauss(self, stk=None):
         stk = self._stk_checker(stk)
 
         popt, pcov = curve_fit(gausssian, 
-                               self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
+                               self.get_rel_dist(stk), 
                                self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])     
         gausssian_fit = gausssian(self._fitspace, popt[0], popt[1], popt[2])
         print()
@@ -203,20 +251,19 @@ class Profile():
         popt2mem = None
         while N <= self._N_max:
             ma = np.max(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])
-            diff = np.max(self._rel_dist[self._data_dict[stk]>self._threshold[stk]]) - \
-                   np.min(self._rel_dist[self._data_dict[stk]>self._threshold[stk]])
+            diff = np.max(self.get_rel_dist(stk)) - np.min(self.get_rel_dist(stk))
             basex0 = diff/(N+1)
             params_0 = np.array([ma/2 for _ in range(N)]+ \
                                 [-diff/2+basex0*(i+1) for i in range(N)]+ \
                                 [basex0/2 for _ in range(N)])
             try: 
                 popt, pcov = curve_fit(lambda x, *params_0: wrapper_gausssian_N(x, N, params_0), \
-                                       self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
+                                       self.get_rel_dist(stk), 
                                        self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], 
                                        p0=params_0, method='dogbox')
             except RuntimeError:
                 break
-            expected = wrapper_gausssian_N(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], N, popt)
+            expected = wrapper_gausssian_N(self.get_rel_dist(stk), N, popt)
 
             # # r = abs(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]] - expected)
             # # chisq = np.sum((r/np.std(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]]))**2)/N
@@ -250,7 +297,11 @@ class Profile():
         if popt2mem is None:
             print("Fit unsuccessful!")
             return 0
-        if np.max(abs(popt2mem[N:2*N])) > np.max(abs(self._fitspace)):
+        if len(self._rel_dist[self._data_dict[stk]>4*self._threshold[stk]]) == 0:
+            print("Fit unsuccessful!")
+            return 0
+        if np.max(abs(popt2mem[N:2*N])) > \
+                np.max(abs(self._rel_dist[self._data_dict[stk]>4*self._threshold[stk]])):
             print("Fit unsuccessful!")
             return 0
         gausssian_fit = wrapper_gausssian_N(self._fitspace, N-1, popt2mem)
@@ -276,7 +327,7 @@ class Profile():
         :param color (optional):
             Plot color.
         :param save (optional):
-           Wright the plot in a file? Default is True.
+            Write the plot in a file? Default is True.
         """
         stk = self._stk_checker(stk)
 
@@ -290,10 +341,10 @@ class Profile():
         if len(self.stokes) > 1:
             if color is None:
                 color = list(np.random.choice(range(256), size=3)/256)
-            ax.title(f'Stokes {stk}')
+            # ax.title(f'Stokes {stk}')
 
         if plot_profile:
-            ax.scatter(self._rel_dist[self._data_dict[stk]>self._threshold[stk]], 
+            ax.scatter(self.get_rel_dist(stk), 
                        self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]], 
                        color=color, label='data')
 
