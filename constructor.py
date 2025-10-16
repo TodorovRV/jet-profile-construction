@@ -117,24 +117,39 @@ class Ridgeline_constructor(Jet_data):
         mean = circmean(ridgeline_polar[1])
         std = circstd(ridgeline_polar[1])
         ridgeline_polar[1] = normalize_angle(ridgeline_polar[1])
-    
+
+        def circmedian(angs):
+            pdists = angs[np.newaxis, :] - angs[:, np.newaxis]
+            pdists = (pdists + np.pi) % (2 * np.pi) - np.pi
+            pdists = np.abs(pdists).sum(1)
+            return angs[np.argmin(pdists)]
+
         # delete too different points
         # get points around the core with mean angle
         for i in np.arange(ridgeline_polar[2].size - 2, -1, -1):
             if ridgeline_polar[0][i] == 0:
                 ridgeline_polar[1][i] = ridgeline_polar[1][i + 1]
             if np.abs(ridgeline_polar[1][i] - mean) > std:
-                ridgeline_polar[1][i] = circmean(ridgeline_polar[1, i+1:i + 5])
+                ridgeline_polar[1][i] = circmean(ridgeline_polar[1, i+1:i+5])
             beam_r = 1/np.sqrt((np.cos(ridgeline_polar[1][i]+self.beam[2])/self.beam[1])**2+\
                     (np.sin(ridgeline_polar[1][i]+self.beam[2])/self.beam[0])**2)
             factor = beam_r/self.beam[1]
             if ridgeline_polar[0][i] < core_radius*factor:
-                ridgeline_polar[1][i] = circmean(ridgeline_polar[1, i+1:i + 5])
+                ridgeline_polar[1][i] = circmedian(ridgeline_polar[1, i+1:i+5])
 
         ridgeline_polar[1] = normalize_angle(ridgeline_polar[1])
         for i in np.arange(ridgeline_polar[1].size):
             if np.isnan(ridgeline_polar[1][i]):
                 ridgeline_polar[1][i] = ridgeline_polar[1][i - 1]
+
+        i = 0
+        while i < len(ridgeline_polar[1])-1:
+            angle = ridgeline_polar[1][i]
+            if abs(ridgeline_polar[1][i-1] - angle) + abs(ridgeline_polar[1][i+1] - angle) > \
+               2*abs(ridgeline_polar[1][i-1] - ridgeline_polar[1][i+1]):
+                ridgeline_polar = np.delete(ridgeline_polar, i, axis=1)
+            else:
+                i+=1
 
         ridgeline_polar = ridgeline_polar[:, ridgeline_polar[0].argsort()]
         while ridgeline_polar[1].max() - ridgeline_polar[1].min() > np.pi/4:
