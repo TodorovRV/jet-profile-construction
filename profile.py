@@ -22,6 +22,7 @@ class Profile():
         self._threshold = {}
         # self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
         self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
+        print(self._rel_dist)
         self._rel_dist_correction()
         self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 10000)
         self._fit = None
@@ -112,7 +113,7 @@ class Profile():
         """
         Shorthand maximum gaussians used in fit.
         """
-        return self.N_max
+        return self._N_max
 
     @property
     def fitparam(self):
@@ -131,16 +132,16 @@ class Profile():
             self._fit_gauss(stk=None)
             return self._fitparam["popt"]
 
-    @property
-    def N(self):
-        """
-        Shorthand number gaussians used in fit.
-        """
-        try:
-            return self._fitparam["N"]
-        except KeyError:
-            self._fit_gauss(stk=None)
-            return self._fitparam["N"]
+    # @property
+    # def N(self):
+    #     """
+    #     Shorthand number gaussians used in fit.
+    #     """
+    #     try:
+    #         return self._fitparam["N"]
+    #     except KeyError:
+    #         self._fit_gauss(stk=None)
+    #         return self._fitparam["N"]
 
     @N_max.setter
     def N_max(self, new):
@@ -249,7 +250,7 @@ class Profile():
         N = 1
         cond = np.inf
         popt2mem = None
-        while N <= self._N_max:
+        while N <= self.N_max:
             ma = np.max(self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])
             diff = np.max(self.get_rel_dist(stk)) - np.min(self.get_rel_dist(stk))
             basex0 = diff/(N+1)

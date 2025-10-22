@@ -17,6 +17,9 @@ class Ridgeline_constructor(Jet_data):
         super().__init__()
         self._ridgeline = []
         self._bbox = None
+        self._threshold = {}
+        self._std = {}
+        self._stopping_criterion = ("std", 20)
 
     @property
     def ridgeline(self):
@@ -48,6 +51,33 @@ class Ridgeline_constructor(Jet_data):
             dist += np.hypot(self._ridgeline[idx+1][0]-self._ridgeline[idx][0],
                              self._ridgeline[idx+1][1]-self._ridgeline[idx][1])
         return dist
+    
+    @property
+    def stopping_criterion(self):
+
+        return self._stopping_criterion
+    
+    @stopping_criterion.setter
+    def stopping_criterion(self, new):
+
+        self._stopping_criterion = new
+
+    def threshold(self, stk):
+
+        stk = stk.upper()
+        if self._threshold[stk] is None:
+            self._threshold[stk] = 20*self.get_std(stk)
+        return self._threshold[stk]
+    
+    def set_threshold(self, stk, new):
+
+        stk = stk.upper()
+        self._threshold[stk] = new
+
+    def get_std(self, stk):
+
+        npixels_beam = np.pi*self.beam[0]*self.beam[1]/(4*np.log(2)*self.pixsize[1]**2)
+        return find_image_std(self.get_image(stk), beam_npixels=npixels_beam)
 
     def ridgeline_from_fits(self, fname):
         """
@@ -58,7 +88,7 @@ class Ridgeline_constructor(Jet_data):
             self._ridgeline.append([point[0], point[1]])
         self._ridgeline = np.array(self._ridgeline)
 
-    def construct_ridge(self, threshold=None, stk='I', smoothing_factor=0.2):
+    def construct_ridge(self, stk='I', smoothing_factor=0.2):
         """
         Constructs ridgeline. 
 
@@ -72,17 +102,12 @@ class Ridgeline_constructor(Jet_data):
         stk = stk.upper()
         img = self.get_image(stk)
 
-        if threshold is None:
-            npixels_beam = np.pi*self.beam[0]*self.beam[1]/(4*np.log(2)*self.pixsize[1]**2)
-            std = find_image_std(img, beam_npixels=npixels_beam)
-            threshold = 20*std
-
         core_radius = 1.7*self.beam[1]
         lmapsize = round(np.hypot(self.imsize[0], self.imsize[1]))
         lmap = [[[], [], []] for _ in range(lmapsize)]
         for x in np.arange(self.imsize[0]):
             for y in np.arange(self.imsize[1]):
-                if not img[x, y] > threshold:
+                if not img[x, y] > self.threshold(stk):
                     continue
                 length = np.hypot(x - self.x_c, y - self.y_c)
                 if x - self.x_c != 0:
@@ -107,7 +132,29 @@ class Ridgeline_constructor(Jet_data):
         ridgeline_polar[2].append(100)
         
         for length_arr in lmap:
-            if len(length_arr[0]) > 0 and length_arr[0][0] > 0:
+            if len(length_arr[0]) > 2 and length_arr[0][0] > 0:
+                if self.stopping_criterion[0] == "std":
+                    if length_arr[2].max() < self.stopping_criterion[1]*self.get_std(stk):
+                        continue
+                elif self.stopping_criterion[0] == "Hovatta":
+                    length_arr = np.array(length_arr)
+                    length_arr = length_arr[:, length_arr[1].argsort()]
+                    P = Profile([(x, 0) for x in length_arr[1]], 
+                                (circular_mean(length_arr[1], w=normalize(length_arr[2])), 0))
+                    P.load_data(length_arr[2], stk=stk)
+                    P.N_max = 1
+                    P.set_threshold(self.stopping_criterion[1]/2*self.get_std(stk))
+                    if len(P.get()) < 3:
+                        continue
+                    try:
+                        amp = P.fitparam[0]
+                    except KeyError:
+                        continue
+                    if amp < self.stopping_criterion[1]*self.get_std(stk):
+                        continue
+                else:
+                    raise Exception("Unknown stopping criterion!")
+
                 ridgeline_polar[0].append(np.mean(np.array(length_arr[0])))
                 ridgeline_polar[1].append(circular_mean(length_arr[1], w=normalize(length_arr[2])))
                 ridgeline_polar[2].append(1)
@@ -176,6 +223,11 @@ class Ridgeline_constructor(Jet_data):
         for r, theta in zip(rs, thetas):
             self._ridgeline.append([r*np.cos(theta), r*np.sin(theta)])
         self._ridgeline = np.array(self._ridgeline)
+        self._check_ridgeline(stk)
+    
+    def _check_ridgeline(self, stk):
+        if self.stopping_criterion[0] == "std":
+            pass
 
     def plot(self, stk=None, outdir='', outfile='fig.png', fig=None, ax=None, min_abs_level=None,
              abs_levels=None, contour_color="black", ridge_size=None, ridge_color="grey", vectors=None):
@@ -196,8 +248,8 @@ class Ridgeline_constructor(Jet_data):
                 stk = "I"
         stk = stk.upper()
         img = self.get_image(stk)
-        npixels_beam = np.pi * self.beam[0] * self.beam[1] / (4 * np.log(2) * self.pixsize[1] ** 2)
-        std = find_image_std(img, beam_npixels=npixels_beam)
+        # npixels_beam = np.pi * self.beam[0] * self.beam[1] / (4 * np.log(2) * self.pixsize[1] ** 2)
+        std = self.get_std(stk) # find_image_std(img, beam_npixels=npixels_beam)
         if min_abs_level is None:
             min_abs_level = 3 * std
         # min_abs_level = 1e-5
@@ -384,7 +436,8 @@ if __name__ == "__main__":
     # construct ridgeline
     npixels_beam = np.pi * r.beam[0] * r.beam[1] / (4 * np.log(2) * r.pixsize[1] ** 2)
     std = find_image_std(r.get_image(stk='I'), beam_npixels=npixels_beam)
-    r.construct_ridge(20*std, stk='I', smoothing_factor=0.2)
+    r.set_threshold(20*std)
+    r.construct_ridge(stk='I', smoothing_factor=0.2)
     # ridgeline data also can be read from fits: r.ridgeline_from_fits(ridge_file)
     
     # get profiles from distance along ridgeline
