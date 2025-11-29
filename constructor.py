@@ -5,7 +5,8 @@ from image_local import CleanImage, Image, Jet_data, plot
 from scipy.stats import circmean, circstd
 from scipy.optimize import curve_fit 
 from utils_local import (find_bbox, find_image_std, mas_to_rad, degree_to_rad,
-        normalize, circular_mean, normalize_angle)
+        normalize, circular_mean, normalize_angle, circular_dbscan,
+        get_cluster_subarrays)
 from profile import Profile
 
 
@@ -20,6 +21,8 @@ class Ridgeline_constructor(Jet_data):
         self._threshold = {}
         self._std = {}
         self._stopping_criterion = ("std", 20)
+        self._r_x_c = None
+        self._r_y_c = None
 
     @property
     def ridgeline(self):
@@ -27,7 +30,7 @@ class Ridgeline_constructor(Jet_data):
         Shorthand for getting ridgeline data.
 
         :return:
-        Array [[x1, y1], [x2, y2], ...] where each couple x_, y_ represents coordinates of sigle
+        Array [[x1, y1], [x2, y2], ...] where each couple x_, y_ represents ra, dec of a sigle
         ridgline point (in mas).
         """
         if len(self._ridgeline) == 0:
@@ -88,7 +91,9 @@ class Ridgeline_constructor(Jet_data):
             self._ridgeline.append([point[0], point[1]])
         self._ridgeline = np.array(self._ridgeline)
 
-    def construct_ridge(self, stk='I', smoothing_factor=0.2):
+    def construct_ridge(self, stk='I', smoothing_factor=0.2, 
+                        use_brightest_pixel_as_center=True, 
+                        center=None):
         """
         Constructs ridgeline. 
 
@@ -101,30 +106,39 @@ class Ridgeline_constructor(Jet_data):
         """
         stk = stk.upper()
         img = self.get_image(stk)
-
+        # self.x_c, self.y_c = np.unravel_index(img.argmax(), img.shape)
+        if use_brightest_pixel_as_center:
+            self._r_x_c, self._r_y_c = np.unravel_index(img.argmax(), img.shape)
+        else:
+            assert center is not None, "Use brightest pixel as center or provide one!"
+            self._r_y_c, self._r_x_c = self._convert_coordinate(center)
+            
+        xy_c_mas = self._convert_array_coordinate((self._r_x_c, self._r_y_c))       
         core_radius = 1.7*self.beam[1]
         lmapsize = round(np.hypot(self.imsize[0], self.imsize[1]))
         lmap = [[[], [], []] for _ in range(lmapsize)]
         for x in np.arange(self.imsize[0]):
             for y in np.arange(self.imsize[1]):
-                if not img[x, y] > self.threshold(stk):
+                if not img[y, x] > self.threshold(stk):
                     continue
-                length = np.hypot(x - self.x_c, y - self.y_c)
-                if x - self.x_c != 0:
-                    angle = -self.beam[2] + np.arctan2(y - self.y_c, x - self.x_c)
+                length = np.hypot(x - self._r_x_c, y - self._r_y_c)
+                if x - self._r_x_c != 0:
+                    angle = -self.beam[2] + np.arctan2(y - self._r_y_c, x - self._r_x_c)
                 else:
                     angle = -self.beam[2] + np.pi/2
                 beam_r = 1/np.sqrt((np.sin(angle)/self.beam[1])**2+(np.cos(angle)/self.beam[0])**2)
                 length = round(length/beam_r*self.beam[1])
                 xy_mas = self._convert_array_coordinate((x, y))
-                r = np.hypot(xy_mas[0], xy_mas[1])
+                r = np.hypot(xy_mas[0]-xy_c_mas[0], xy_mas[1]-xy_c_mas[1])
                 if r > 0:
                     lmap[length][0].append(r)
-                    lmap[length][2].append(img[x, y])
-                    if xy_mas[0] <= 0:
-                        lmap[length][1].append(np.arcsin(-xy_mas[1]/r))
+                    lmap[length][2].append(img[y, x])
+                    if xy_mas[1]-xy_c_mas[1] <= 0:
+                        lmap[length][1].append(np.pi - np.arcsin(-(-xy_mas[0]+xy_c_mas[0])/r))
                     else:
-                        lmap[length][1].append(np.pi - np.arcsin(-xy_mas[1]/r))
+                        lmap[length][1].append(np.arcsin(-(-xy_mas[0]+xy_c_mas[0])/r))
+                if length == 30:
+                    plt.scatter([x], [y])
 
         ridgeline_polar = [[], [], []]
         ridgeline_polar[0].append(0)
@@ -134,32 +148,89 @@ class Ridgeline_constructor(Jet_data):
         for length_arr in lmap:
             if len(length_arr[0]) > 2 and length_arr[0][0] > 0:
                 if self.stopping_criterion[0] == "std":
-                    if length_arr[2].max() < self.stopping_criterion[1]*self.get_std(stk):
+                    if np.max(length_arr[2]) < self.stopping_criterion[1]*self.get_std(stk):
                         continue
+                    direction = circular_mean(length_arr[1], w=normalize(length_arr[2]))
+                    # direction = length_arr[1][np.argmax(length_arr[2])]
                 elif self.stopping_criterion[0] == "Hovatta":
                     length_arr = np.array(length_arr)
+                    mean = circular_mean(length_arr[1], w=normalize(length_arr[2]))
+                    if length_arr[1].max() < mean:
+                        length_arr[1][length_arr[1] < 0] += 2*np.pi
                     length_arr = length_arr[:, length_arr[1].argsort()]
-                    P = Profile([(x, 0) for x in length_arr[1]], 
-                                (circular_mean(length_arr[1], w=normalize(length_arr[2])), 0))
+
+                    labels = circular_dbscan(length_arr[1], eps=0.3, min_samples=5)
+                    subarrays = get_cluster_subarrays(length_arr[2], labels)
+                    peak = 0.
+                    peak_label = 0.
+                    for label in subarrays:
+                        subarray = subarrays[label]
+                        if np.max(subarray) > peak:
+                            peak = np.max(subarray)
+                            peak_label = label
+                    length_arr = np.array([get_cluster_subarrays(length_arr[0], labels)[peak_label],
+                                           get_cluster_subarrays(length_arr[1], labels)[peak_label],
+                                           subarrays[peak_label]])
+                    # while np.argmax(length_arr[2]) < len(length_arr[1])/2:
+                    #     length_arr[1, -1] -= 2*np.pi
+                    #     length_arr = np.roll(length_arr, 1, axis=1)
+                    # while np.argmax(length_arr[2]) > len(length_arr[1])/2:
+                    #     length_arr[1, 0] += 2*np.pi
+                    #     length_arr = np.roll(length_arr, -1, axis=1)
+                    
+                    sorted_angles = length_arr[1]
+                    n = len(sorted_angles)
+                    shifted = np.tile(sorted_angles, (n, 1))
+                    for i in range(n):
+                        shifted[i, i+1:] -= 2 * np.pi
+                    ranges = np.ptp(shifted, axis=1)  # ptp = peak to peak = max - min                    
+                    best_idx = np.argmin(ranges)
+                    length_arr[1] = shifted[best_idx]
+                    length_arr = length_arr[:, length_arr[1].argsort()]
+
+                    mean = np.average(length_arr[1], weights=normalize(length_arr[2]))
+                    # mean = circular_mean(length_arr[1], w=normalize(length_arr[2]))
+                        
+                    P = Profile([(0, x) for x in length_arr[1]], (0, mean))
                     P.load_data(length_arr[2], stk=stk)
                     P.N_max = 1
                     P.set_threshold(self.stopping_criterion[1]/2*self.get_std(stk))
-                    if len(P.get()) < 3:
+                    if len(P.get()) < 10:
                         continue
+                    P._fit_single_gauss(stk=stk, initial_guess=(np.max(length_arr[2]), 
+                                        0., (length_arr[1].max()-length_arr[1].min())/4))
+                    # if length_arr[0, 0] > 1.55 and length_arr[0, 0] < 1.56:
+                        # print(length_arr)
+                    # P.plot(stk=stk, outfile=f"test_r={length_arr[0, 0]}.png", plot_fit=True)
+                        # raise
+                        
                     try:
                         amp = P.fitparam[0]
+                        # direction = P.fitparam[1] + mean
+                        direction = mean
                     except KeyError:
-                        continue
-                    if amp < self.stopping_criterion[1]*self.get_std(stk):
+                        if length_arr[0][0] < core_radius:
+                            amp = np.inf
+                            direction = mean
+                        else:
+                            continue
+                        # amp = length_arr[2].max()/2
+                    # P.plot(stk=stk, outfile=f"test_r={length_arr[0, 0]}.png", plot_fit=True)
+                    if amp < self.stopping_criterion[1]*self.get_std(stk) or \
+                       length_arr[2].max() < self.stopping_criterion[1]*self.get_std(stk):
                         continue
                 else:
                     raise Exception("Unknown stopping criterion!")
 
-                ridgeline_polar[0].append(np.mean(np.array(length_arr[0])))
-                ridgeline_polar[1].append(circular_mean(length_arr[1], w=normalize(length_arr[2])))
+                r_mean = np.mean(np.array(length_arr[0]))
+                if len(ridgeline_polar[0]) > 5 and r_mean > 2*ridgeline_polar[0][-1]:
+                    continue
+                ridgeline_polar[0].append(r_mean)
+                ridgeline_polar[1].append(direction)
                 ridgeline_polar[2].append(1)
+
         ridgeline_polar = np.array(ridgeline_polar)
-    
+
         # shift angles on 2pi
         mean = circmean(ridgeline_polar[1])
         std = circstd(ridgeline_polar[1])
@@ -177,7 +248,7 @@ class Ridgeline_constructor(Jet_data):
             if ridgeline_polar[0][i] == 0:
                 ridgeline_polar[1][i] = ridgeline_polar[1][i + 1]
             if np.abs(ridgeline_polar[1][i] - mean) > std:
-                ridgeline_polar[1][i] = circmean(ridgeline_polar[1, i+1:i+5])
+                ridgeline_polar[1][i] = circmedian(ridgeline_polar[1, i+1:i+5])
             beam_r = 1/np.sqrt((np.cos(ridgeline_polar[1][i]+self.beam[2])/self.beam[1])**2+\
                     (np.sin(ridgeline_polar[1][i]+self.beam[2])/self.beam[0])**2)
             factor = beam_r/self.beam[1]
@@ -213,18 +284,20 @@ class Ridgeline_constructor(Jet_data):
 
         rs = np.linspace(0, maxlen_coord, 1000)
         thetas = spl(rs)
+        dec_c, ra_c = self._convert_array_coordinate((self._r_x_c, self._r_y_c))
+        # dec_c, ra_c = 0., 0.
 
         # self._ridgeline = []
         # for r, theta in zip(ridgeline_polar[0], ridgeline_polar[1]):
-        #     self._ridgeline.append([r*np.cos(theta), r*np.sin(theta)])
+        #     self._ridgeline.append([r*np.cos(theta)+ra_c, r*np.sin(theta)+dec_c])
         # self._ridgeline = np.array(self._ridgeline)
 
         self._ridgeline = []
         for r, theta in zip(rs, thetas):
-            self._ridgeline.append([r*np.cos(theta), r*np.sin(theta)])
+            self._ridgeline.append([r*np.cos(theta)+ra_c, r*np.sin(theta)+dec_c])
         self._ridgeline = np.array(self._ridgeline)
         self._check_ridgeline(stk)
-    
+        
     def _check_ridgeline(self, stk):
         if self.stopping_criterion[0] == "std":
             pass
@@ -251,11 +324,11 @@ class Ridgeline_constructor(Jet_data):
         # npixels_beam = np.pi * self.beam[0] * self.beam[1] / (4 * np.log(2) * self.pixsize[1] ** 2)
         std = self.get_std(stk) # find_image_std(img, beam_npixels=npixels_beam)
         if min_abs_level is None:
-            min_abs_level = 3 * std
+            min_abs_level = 3 * std 
         # min_abs_level = 1e-5
         if self._bbox is None:
             blc, trc = find_bbox(img, level=min_abs_level*3, min_maxintensity_mjyperbeam=10*std,
-                                min_area_pix=0.*npixels_beam, delta=10)
+                                min_area_pix=0., delta=10)
             if blc[0] == 0: blc = (blc[0] + 1, blc[1])
             if blc[1] == 0: blc = (blc[0], blc[1] + 1)
             if trc[0] == img.shape[0]: trc = (trc[0] - 1, trc[1])
@@ -267,7 +340,7 @@ class Ridgeline_constructor(Jet_data):
                     min_abs_level = np.max(img)/1000
                     break
                 blc, trc = find_bbox(img, level=min_abs_level*3, min_maxintensity_mjyperbeam=10*std,
-                                    min_area_pix=0.*npixels_beam, delta=10)
+                                    min_area_pix=0., delta=10)
                 if blc[0] == 0: blc = (blc[0] + 1, blc[1])
                 if blc[1] == 0: blc = (blc[0], blc[1] + 1)
                 if trc[0] == img.shape[0]: trc = (trc[0] - 1, trc[1])
@@ -293,14 +366,14 @@ class Ridgeline_constructor(Jet_data):
         ax.set_xlabel(r'Relative R.A. (mas)')
         ax.set_ylabel(r'Relative Decl. (mas)')
         if len(self._ridgeline) > 0:
-            ax.scatter(-self._ridgeline[:, 0], self._ridgeline[:, 1], s=ridge_size, color=ridge_color)
+            ax.scatter(self._ridgeline[:, 0], self._ridgeline[:, 1], s=ridge_size, color=ridge_color)
         else:
             print("No ridgeline to plot! Run Ridgeline_constructor.construct_ridge in order to build one!")
         if vectors is None:
             vectors_mask = None
         else:
             vectors_mask = img < min_abs_level
-        plot(contours=img,  # subtract_gaussian_core(image_data_i, mapsize, 40*std),
+        plot(contours=img[:, ::-1],  # subtract_gaussian_core(image_data_i, mapsize, 40*std),
                 colors=None, colors_mask=None,
                 vectors=vectors, vectors_mask=vectors_mask,
                 x=self.x, show_beam=True, k=2, vinc=4, cmap='Oranges',
@@ -327,10 +400,10 @@ class Profile_constructor(Ridgeline_constructor):
         if len(self._ridgeline) == 0:
             if len(self.stokes) == 1:
                 warnings.warn("No rigeline found, constructing")
-                self.construct_ridge(self, threshold, stk=self.stokes[0], smoothing_factor=0.2)
+                self.construct_ridge(self, stk=self.stokes[0], smoothing_factor=0.2)
             elif "I" in self.stokes:
                 warnings.warn("No rigeline found, constructing")
-                self.construct_ridge(self, threshold, stk="I", smoothing_factor=0.2)
+                self.construct_ridge(self, stk="I", smoothing_factor=0.2)
             else:
                 raise Exception("No rigeline found, unable to construct!")
         assert (idx != 0 and idx != len(self._ridgeline)-2), "Unable to construct the profile!"

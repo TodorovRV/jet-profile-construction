@@ -22,8 +22,9 @@ class Profile():
         self._threshold = {}
         # self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
         self._rel_dist = np.array([copysign(np.hypot(x-self._cp[0], y-self._cp[1]), y-self._cp[1]) for x, y in coords])
-        print(self._rel_dist)
-        self._rel_dist_correction()
+        # print(self._rel_dist)
+        # print(self._cp[1])
+        # self._rel_dist_correction()
         self._fitspace = np.linspace(np.min(self._rel_dist), np.max(self._rel_dist), 10000)
         self._fit = None
         self._fitparam = {}
@@ -35,7 +36,7 @@ class Profile():
         while abs(self._rel_dist[it]) < mem:
             if self._rel_dist[it]*self._rel_dist[0] < 0:
                 self._rel_dist[it] *= -1.
-            mem =  abs(self._rel_dist[it])
+            mem = abs(self._rel_dist[it])
             it += 1
         mem = abs(self._rel_dist[-1])
         it = len(self._rel_dist)-2
@@ -211,22 +212,28 @@ class Profile():
         stk = self._stk_checker(stk)
         return self._rel_dist[self._data_dict[stk] > self._threshold[stk]]
 
-    def _fit_single_gauss(self, stk=None):
+    def _fit_single_gauss(self, stk=None, initial_guess=None):
         stk = self._stk_checker(stk)
 
-        popt, pcov = curve_fit(gausssian, 
-                               self.get_rel_dist(stk), 
-                               self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]])     
-        gausssian_fit = gausssian(self._fitspace, popt[0], popt[1], popt[2])
-        print()
-        print(f'Gaussian fit paremeters for stokes {stk}:')
-        print(f'Amplutude = {round(popt[0], 2)} mJy/beam')
-        print(f'Dispersion = {abs(round(popt[2], 2))} mas')
-        print(f'Max coordinate = {round(popt[1], 2)} mas')
-        print()
-        self._fit = gausssian_fit
-        self._fitparam["N"] = 1
-        self._fitparam["popt"] = popt
+        try: 
+            fitdata = self._data_dict[stk][self._data_dict[stk]>self._threshold[stk]]
+            popt, pcov = curve_fit(gausssian, self.get_rel_dist(stk), 
+                                   fitdata, p0=initial_guess)     
+            # if popt[0] < np.max(fitdata)*1.1:
+            #     return 
+            gausssian_fit = gausssian(self._fitspace, popt[0], popt[1], popt[2])
+            self._fit = gausssian_fit
+            self._fitparam["N"] = 1
+            self._fitparam["popt"] = popt
+        except RuntimeError:
+            pass
+        # print()
+        # print(f'Gaussian fit paremeters for stokes {stk}:')
+        # print(f'Amplutude = {round(popt[0], 2)} mJy/beam')
+        # print(f'Dispersion = {abs(round(popt[2], 2))} mas')
+        # print(f'Max coordinate = {round(popt[1], 2)} mas')
+        # print()
+
 
     def _fit_gauss(self, stk=None):
         stk = self._stk_checker(stk)
