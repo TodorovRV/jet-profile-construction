@@ -93,7 +93,7 @@ class Ridgeline_constructor(Jet_data):
 
     def construct_ridge(self, stk='I', smoothing_factor=0.2, 
                         use_brightest_pixel_as_center=True, 
-                        center=None):
+                        center=None, averaging_factor=1.):
         """
         Constructs ridgeline. 
 
@@ -127,7 +127,7 @@ class Ridgeline_constructor(Jet_data):
                 else:
                     angle = -self.beam[2] + np.pi/2
                 beam_r = 1/np.sqrt((np.sin(angle)/self.beam[1])**2+(np.cos(angle)/self.beam[0])**2)
-                length = round(length/beam_r*self.beam[1])
+                length = round(round(length/beam_r*self.beam[1]/averaging_factor)*averaging_factor)
                 xy_mas = self._convert_array_coordinate((x, y))
                 r = np.hypot(xy_mas[0]-xy_c_mas[0], xy_mas[1]-xy_c_mas[1])
                 if r > 0:
@@ -189,6 +189,8 @@ class Ridgeline_constructor(Jet_data):
                     length_arr = length_arr[:, length_arr[1].argsort()]
 
                     mean = np.average(length_arr[1], weights=normalize(length_arr[2]))
+                    # length_arr = length_arr[:, length_arr[1] - mean > -np.pi/2]
+                    # length_arr = length_arr[:, length_arr[1] - mean < np.pi/2]
                     # mean = circular_mean(length_arr[1], w=normalize(length_arr[2]))
                         
                     P = Profile([(0, x) for x in length_arr[1]], (0, mean))
@@ -216,15 +218,18 @@ class Ridgeline_constructor(Jet_data):
                             continue
                         # amp = length_arr[2].max()/2
                     # P.plot(stk=stk, outfile=f"test_r={length_arr[0, 0]}.png", plot_fit=True)
+                    # print(self.stopping_criterion[1]*self.get_std(stk))
                     if amp < self.stopping_criterion[1]*self.get_std(stk) or \
                        length_arr[2].max() < self.stopping_criterion[1]*self.get_std(stk):
                         continue
+                    # P.plot(stk=stk, outfile=f"test_r={length_arr[0, 0]}.png", plot_fit=True)
                 else:
                     raise Exception("Unknown stopping criterion!")
 
                 r_mean = np.mean(np.array(length_arr[0]))
-                if len(ridgeline_polar[0]) > 5 and r_mean > 2*ridgeline_polar[0][-1]:
+                if len(ridgeline_polar[0]) > 5 and r_mean > 3*ridgeline_polar[0][-1]:
                     continue
+
                 ridgeline_polar[0].append(r_mean)
                 ridgeline_polar[1].append(direction)
                 ridgeline_polar[2].append(1)
@@ -247,8 +252,8 @@ class Ridgeline_constructor(Jet_data):
         for i in np.arange(ridgeline_polar[2].size - 2, -1, -1):
             if ridgeline_polar[0][i] == 0:
                 ridgeline_polar[1][i] = ridgeline_polar[1][i + 1]
-            if np.abs(ridgeline_polar[1][i] - mean) > std:
-                ridgeline_polar[1][i] = circmedian(ridgeline_polar[1, i+1:i+5])
+            # if np.abs(ridgeline_polar[1][i] - mean) > std:
+            #     ridgeline_polar[1][i] = circmedian(ridgeline_polar[1, i+1:i+5])
             beam_r = 1/np.sqrt((np.cos(ridgeline_polar[1][i]+self.beam[2])/self.beam[1])**2+\
                     (np.sin(ridgeline_polar[1][i]+self.beam[2])/self.beam[0])**2)
             factor = beam_r/self.beam[1]
@@ -277,13 +282,24 @@ class Ridgeline_constructor(Jet_data):
         if len(ridgeline_polar[0]) < 4:
             print("Unable to construct ridgeline!")
             return 0
+
         spl = UnivariateSpline(list(ridgeline_polar[0])+[maxlen_coord*1.2], 
                                list(ridgeline_polar[1])+[circmean(ridgeline_polar[1])], 
                                w=list(ridgeline_polar[2])+[2.], 
                                s=smoothing_factor)
-
         rs = np.linspace(0, maxlen_coord, 1000)
         thetas = spl(rs)
+
+        while thetas.max() - thetas.min() > np.pi/4:
+            ridgeline_polar = ridgeline_polar[:, :-1]
+            maxlen_coord = np.max(ridgeline_polar[0])
+            spl = UnivariateSpline(list(ridgeline_polar[0])+[maxlen_coord*1.2], 
+                                list(ridgeline_polar[1])+[circmean(ridgeline_polar[1])], 
+                                w=list(ridgeline_polar[2])+[2.], 
+                                s=smoothing_factor)
+            rs = np.linspace(0, maxlen_coord, 1000)
+            thetas = spl(rs)
+
         dec_c, ra_c = self._convert_array_coordinate((self._r_x_c, self._r_y_c))
         # dec_c, ra_c = 0., 0.
 
@@ -296,11 +312,6 @@ class Ridgeline_constructor(Jet_data):
         for r, theta in zip(rs, thetas):
             self._ridgeline.append([r*np.cos(theta)+ra_c, r*np.sin(theta)+dec_c])
         self._ridgeline = np.array(self._ridgeline)
-        self._check_ridgeline(stk)
-        
-    def _check_ridgeline(self, stk):
-        if self.stopping_criterion[0] == "std":
-            pass
 
     def plot(self, stk=None, outdir='', outfile='fig.png', fig=None, ax=None, min_abs_level=None,
              abs_levels=None, contour_color="black", ridge_size=None, ridge_color="grey", vectors=None):
